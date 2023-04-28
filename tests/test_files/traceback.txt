@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+File "tests/test_files/test_file.py", line 5, in divide
+return a / b
+        ~~^~~
+ZeroDivisionError: division by zero

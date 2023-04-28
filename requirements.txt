@@ -1,0 +1,7 @@
+flake8
+gitpython
+openai
+pyperclip
+pytest
+python-dotenv
+tiktoken
