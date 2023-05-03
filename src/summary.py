@@ -6,7 +6,10 @@ import shutil
 import fnmatch
 from git import Repo
 import tempfile
-from .file_processing import check_ignore_patterns
+from .file_processing import (
+    check_ignore_patterns,
+    remove_matching_patterns_from_list,
+)
 from .openai_api import (
     call_openai_api,
     OPENAI_API_KEY,
@@ -25,10 +28,21 @@ from .traceback_parser import (
 from .utils import (
     is_github_url,
     get_function_info,
+    process_class,
 )
 
 
 def run_summary(args):
+    """
+    Run the summary.
+
+    Args:
+        args (argparse.Namespace): The arguments.
+
+    Returns:
+        str: The formatted summary.
+        int: The number of tokens in the summary.
+    """
 
     input_path = args.input_path
     ignore_patterns = get_ignore_patterns(input_path, args.ignore)
@@ -46,14 +60,17 @@ def run_summary(args):
         print_full_patterns = print_full_patterns[0].split(',')
 
     if args.all:
+        print(f"Summarizing all code in: {input_path}")
         summary = get_all_code(input_path, ignore_patterns)
     elif os.path.isfile(input_path) and input_path.endswith('.py'):
+        print(f"Summarizing file: {input_path}")
         if any(fnmatch.fnmatch(input_path, pattern) for pattern in print_full_patterns):
             with open(input_path, 'r') as f:
                 summary = {input_path: f.read()}
         else:
             summary = {input_path: generate_summary_from_python_file(input_path)}
     elif os.path.isdir(input_path):
+        print(f"Summarizing directory: {input_path}")
         summary = summarize_directory(input_path, ignore_patterns, print_full_patterns)
     else:
         print("Invalid input. Please provide a path to a Python file or a directory.")
@@ -61,20 +78,25 @@ def run_summary(args):
 
     summary_blocks = {
         "file_hierarchy": format_file_hierarchy(input_path, ignore_patterns),
-        "file_summary": format_summary(summary),
+        "file_summaries": format_summaries(summary),
         "traceback": args.traceback,
         "traceback_context": None,
     }
 
     if is_github_url(args.input_path):
-        file_summary = summary_blocks["file_summary"].replace(tmpdir, "")
-        summary_blocks["file_summary"] = file_summary
+        summary_blocks["file_summaries"] = summary_blocks["file_summaries"].replace(tmpdir, "")
         # Delete the temporary directory
         shutil.rmtree(tmpdir)
 
-    if not summary_blocks["file_summary"].strip():
-        print("No code summary found.")
-        sys.exit(0)
+    # if the length of the file_summaries is 0 or the content of the file_summaries is empty, then exit
+    if len(summary_blocks["file_summaries"]) == 0 or summary_blocks["file_summaries"] == "":
+        print("No summary generated.")
+        print("Please check the input path and ignore patterns.")
+        print(f"Input path: {args.input_path}")
+        print(f"Ignore patterns: {ignore_patterns}")
+        print(f"Print full patterns: {print_full_patterns}")
+        print(f"Summary blocks: {summary_blocks}")
+        sys.exit(1)
 
     if args.traceback is not None:
 
@@ -98,7 +120,12 @@ def run_summary(args):
         summary_blocks["traceback_context"] = formatted_traceback
 
     if not args.all:
-        summary_blocks = summarize_blocks(summary_blocks, args.max_tokens_out)
+        print(f"Summarizing {len(summary_blocks['file_summaries'])} files...")
+        summary_blocks = summarize_blocks(summary_blocks, args.max_tokens_out, print_full_patterns)
+
+    # Join the file summaries into a single string
+    # The file_summaries are a dictionary of file paths and their summaries
+    summary_blocks["file_summary"] = "\n".join(summary_blocks["file_summaries"].values())
 
     formatted_summary = f"""Context:
 
@@ -130,26 +157,6 @@ Resolve this error.
     num_tokens = estimate_tokens(formatted_summary)
 
     return formatted_summary, num_tokens
-
-
-def process_class(cls):
-    """
-    Get the methods of a class.
-
-    Args:
-        cls (ast.ClassDef): The class definition.
-
-    Returns:
-        list: A list of the class's methods.
-    """
-
-    methods = []
-
-    for item in cls.body:
-        if isinstance(item, ast.FunctionDef):
-            methods.append(get_function_info(item))
-
-    return methods
 
 
 def generate_summary_from_python_file(file_path):
@@ -204,83 +211,78 @@ def summarize_directory(dir_path, ignore_patterns=None, print_full_patterns=None
         print_full_patterns = []
 
     summary = {}
+
+    total_file_count = 0
     for root, dirs, files in os.walk(dir_path):
 
-        dirs[:] = [d for d in dirs if not check_ignore_patterns(d, ignore_patterns)]
+        # Skip the root if it matches any of the ignore patterns
+        if check_ignore_patterns(root, ignore_patterns):
+            continue
+
+        # If any directories are ignored, print them and remove them from the list
+        dirs = remove_matching_patterns_from_list(dirs, ignore_patterns)
+        total_file_count += len(files)
+        files = remove_matching_patterns_from_list(files, ignore_patterns)
 
         for file in files:
-            if (
-                not check_ignore_patterns(file, ignore_patterns)
-                and not check_ignore_patterns(root, ignore_patterns)
-            ):
-                file_path = os.path.join(root, file)
 
-                # print_full_patterns is a list of strings. ex: ['init']
-                # If any of the patterns are found in the file name string,
-                # then print the full file instead of summarizing
-                if any(
-                        [fnmatch.fnmatch(file, f"*{pattern}*")
-                            for pattern in print_full_patterns]
-                        ) or any(
-                        [fnmatch.fnmatch(file_path, f"*{pattern}*")
-                            for pattern in print_full_patterns]
-                        ):
-                    print(f"Printing full file: {file_path}, Matching pattern: {print_full_patterns}")
+            file_path = os.path.join(root, file)
+            if check_ignore_patterns(file_path, ignore_patterns):
+                print(f"Skipping {file_path} because it matches an ignore pattern")
+                continue
+
+            # print_full_patterns is a list of strings. ex: ['init']
+            # If any of the patterns are found in the file name string,
+            # then print the full file instead of summarizing
+            if any(
+                    [fnmatch.fnmatch(file, f"*{pattern}*")
+                        for pattern in print_full_patterns]
+                    ) or any(
+                    [fnmatch.fnmatch(file_path, f"*{pattern}*")
+                        for pattern in print_full_patterns]
+                    ):
+                print(f"--print-full {file_path}")
+                with open(file_path, 'r') as f:
+                    file_content = f.read()
+                summary[file_path] = file_content
+            else:
+                if file_path.endswith('.py'):
+                    functions = generate_summary_from_python_file(file_path)
+                    summary[file_path] = functions
+                elif os.stat(file_path).st_size < 100:
+                    summary[file_path] = []
+                elif file_path.endswith('.md'):
                     with open(file_path, 'r') as f:
-                        summary[file_path] = f.read()
+                        code = f.read()
+                    # If the code is too long, trim it to the token limit
+                    code = trim_string_to_token_limit(code, 2000)
+                    prompt = f"Summarize the following:\n````\n{code}\n````"
+                    summary[file_path] = call_openai_api(prompt, 200)
+                elif file_path.endswith('.sh'):
+                    with open(file_path, 'r') as f:
+                        code = f.read()
+                    # If the code is too long, trim it to the token limit
+                    code = trim_string_to_token_limit(code, 2000)
+                    prompt = f"Summarize the following:\n````\n{code}\n````"
+                    summary[file_path] = call_openai_api(prompt, 200)
+                elif file_path.endswith('.txt'):
+                    summary[file_path] = []
                 else:
-                    if file_path.endswith('.py'):
-                        functions = generate_summary_from_python_file(file_path)
-                        summary[file_path] = functions
-                    elif file_path.endswith('.ipynb'):
+                    try:
                         with open(file_path, 'r') as f:
                             code = f.read()
-                        # If the code is too long, trim it to the token limit
                         code = trim_string_to_token_limit(code, 2000)
-                        prompt = f"Summarize the following code:\n```\n{code}\n```"
-                        summary[file_path] = call_openai_api(prompt, 500)
-                    elif file_path.endswith('.md'):
-                        with open(file_path, 'r') as f:
-                            code = f.read()
-                        # If the code is too long, trim it to the token limit
-                        code = trim_string_to_token_limit(code, 2000)
-                        prompt = f"Summarize the following:\n```\n{code}\n```"
-                        summary[file_path] = call_openai_api(prompt, 500)
-                    elif file_path.endswith('.sh'):
-                        with open(file_path, 'r') as f:
-                            code = f.read()
-                        # If the code is too long, trim it to the token limit
-                        code = trim_string_to_token_limit(code, 500)
-                        prompt = f"""Summarize the following code:
-```
-{code}
-```
-Summarize any arguments, flags, functions, or options.
-"""
-                        summary[file_path] = call_openai_api(prompt, 2000)
-                    elif file_path.endswith('.txt'):
+                        prompt = f"Summarize the following:\n````\n{code}\n````"
+                        summary[file_path] = call_openai_api(prompt, 200)
+
+                    except UnicodeDecodeError:
                         summary[file_path] = []
-                    else:
 
-                        try:
-                            with open(file_path, 'r') as f:
-                                code = f.read()
-
-                            code = trim_string_to_token_limit(code, 2000)
-                            prompt = f"""Summarize the following code:
-```
-{code}
-```
-"""
-                            summary[file_path] = call_openai_api(prompt, 200)
-
-                        except UnicodeDecodeError:
-                            summary[file_path] = []
-
+    print(f"Fetched summaries for {len(summary)} out of {total_file_count} files.")
     return summary
 
 
-def summarize_blocks(summary_blocks, max_tokens_out=4096):
+def summarize_blocks(summary_blocks, max_tokens_out=4096, print_full_patterns=None):
     """
     Summarize a list of blocks.
 
@@ -288,7 +290,7 @@ def summarize_blocks(summary_blocks, max_tokens_out=4096):
         summary_blocks (list): A list of blocks to summarize.
             summary_blocks = {
                 'file_hierarchy': file_hierarchy,
-                'file_summary': file_summary,
+                'file_summaries': file_summaries,
                 'traceback': traceback,
                 'traceback_context': traceback_context
             }
@@ -321,21 +323,22 @@ def summarize_blocks(summary_blocks, max_tokens_out=4096):
         return reduced_summary_blocks
 
     file_hierarchy = summary_blocks["file_hierarchy"]
-    file_summary = summary_blocks["file_summary"]
+    file_summaries = summary_blocks["file_summaries"]
 
-    total_file_tokens = estimate_tokens(file_hierarchy) + estimate_tokens(file_summary)
+    total_file_tokens = estimate_tokens(file_hierarchy) + estimate_tokens("".join(file_summaries))
     if total_file_tokens <= remaining_tokens:
         reduced_summary_blocks = {
             "file_hierarchy": file_hierarchy,
-            "file_summary": file_summary,
+            "file_summaries": file_summaries,
             "traceback": summary_blocks['traceback'],
             "traceback_context": summary_blocks['traceback_context'],
         }
         return reduced_summary_blocks
 
     reduced_file_summary = summarize_file_summaries(
-        file_summary,
-        (remaining_tokens - estimate_tokens(file_hierarchy))
+        file_summaries,
+        (remaining_tokens - estimate_tokens(file_hierarchy)),
+        print_full_patterns
         )
 
     token_estimate = (
@@ -369,7 +372,7 @@ def summarize_blocks(summary_blocks, max_tokens_out=4096):
     return reduced_summary_blocks
 
 
-def format_summary(summary):
+def format_summaries(summary, print_full_patterns=None):
     """
     Format a summary dictionary into a string.
 
@@ -377,22 +380,27 @@ def format_summary(summary):
         summary (dict): A dictionary of the directory's files and their summaries.
 
     Returns:
-        str: The formatted summary.
+        formatted_summaries (dict): A dictionary of the directory's files and their
+            formatted summaries.
     """
 
-    formatted = []
+    formatted_summaries = {}
     for file_path, content in summary.items():
         file_info = f"File: {file_path}"
         if isinstance(content, list):
-            functions_str = '\n'.join([f"{str(func)}" for func in content])
+            functions_str = ' '.join([f"{str(func)}" for func in content])
             if len(functions_str) == 0:
-                # functions_str = "No functions found"
-                formatted.append(f"{file_info}\n")
+                formatted_summaries[file_path] = f"{file_info}\n"
             else:
-                formatted.append(f"{file_info}\n```\n{functions_str}\n```\n")
-        else:  # Assuming it's the full file content
-            formatted.append(f"{file_info}\n```\n{content}\n```\n")
-    return '\n'.join(formatted)
+                formatted_summaries[file_path] = f"{file_info}\n```\n{functions_str}\n```\n"
+        else:
+            # Assuming it's the full file content
+            if "\n" in content:
+                formatted_summaries[file_path] = f"{file_info}\n```\n{content}\n```\n"
+            else:
+                formatted_summaries[file_path] = f"{file_info}\n{content}\n"
+
+    return formatted_summaries
 
 
 def split_file_summaries(file_summaries, max_chunk_tokens=2000):
@@ -411,24 +419,25 @@ def split_file_summaries(file_summaries, max_chunk_tokens=2000):
     current_chunk = ""
     current_chunk_tokens = 0
 
-    for line in file_summaries.split("\n"):
-        line_tokens = estimate_tokens(line)
+    for file_summary in file_summaries:
+        for line in file_summary.split("\n"):
+            line_tokens = estimate_tokens(line)
 
-        if current_chunk_tokens + line_tokens > max_chunk_tokens:
+            if current_chunk_tokens + line_tokens > max_chunk_tokens:
+                summary_chunks.append(current_chunk.strip())
+                current_chunk = ""
+                current_chunk_tokens = 0
+
+            current_chunk += f"{line}\n"
+            current_chunk_tokens += line_tokens
+
+        if current_chunk.strip():
             summary_chunks.append(current_chunk.strip())
-            current_chunk = ""
-            current_chunk_tokens = 0
-
-        current_chunk += f"{line}\n"
-        current_chunk_tokens += line_tokens
-
-    if current_chunk.strip():
-        summary_chunks.append(current_chunk.strip())
 
     return summary_chunks
 
 
-def summarize_file_summaries(file_summaries, max_tokens_out=4000):
+def summarize_file_summaries(file_summaries, max_tokens_out=4000, print_full_patterns=None):
     """
     Summarize a file summary.
 
@@ -436,6 +445,7 @@ def summarize_file_summaries(file_summaries, max_tokens_out=4000):
         file_summaries (str): The file summary to summarize.
         max_tokens_out (int, optional): The maximum number of tokens to output.
             Defaults to 4000.
+        print_full_patterns (list, optional): A list of patterns to print the full code
 
     Returns:
         str: The summarized file summary.
@@ -448,8 +458,8 @@ def summarize_file_summaries(file_summaries, max_tokens_out=4000):
     summarized_chunks = []
 
     for chunk in summary_chunks:
-        prompt = f"""Please provide a concise summary of the following codebase.
-Highlight core files, classes, and functions.
+        prompt = f"""Please provide a concise summary.
+Highlight core files, classes, functions, etc.
 
 {chunk}
 
@@ -464,7 +474,7 @@ Summary:
     # Check if combined summary fits within the token limit
     while estimate_tokens(combined_summary) > max_tokens_out:
         max_tokens_out -= 50
-        summarized_chunks = summarize_file_summaries(combined_summary, max_tokens_out)
+        summarized_chunks = summarize_file_summaries(combined_summary, max_tokens_out, print_full_patterns)
         combined_summary = "\n".join(summarized_chunks)
 
     return combined_summary

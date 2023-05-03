@@ -39,6 +39,9 @@ def call_openai_api(
     if prompt_tokens + max_tokens > 4096:
         max_tokens = 4096 - prompt_tokens
 
+    if max_tokens < 1:
+        return prompt
+
     prompt_object = (
         model,
         prompt,

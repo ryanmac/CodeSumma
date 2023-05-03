@@ -1,5 +1,6 @@
 # src/utils.py
 import argparse
+import ast
 
 
 def parse_arguments():
@@ -105,3 +106,23 @@ def get_function_info(func_def):
 
     args = [{'name': arg.arg, 'type': 'Any'} for arg in func_def.args.args]
     return FunctionInfo(func_def.name, args)
+
+
+def process_class(cls):
+    """
+    Get the methods of a class.
+
+    Args:
+        cls (ast.ClassDef): The class definition.
+
+    Returns:
+        list: A list of the class's methods.
+    """
+
+    methods = []
+
+    for item in cls.body:
+        if isinstance(item, ast.FunctionDef):
+            methods.append(get_function_info(item))
+
+    return methods

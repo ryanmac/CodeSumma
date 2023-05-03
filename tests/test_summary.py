@@ -3,7 +3,7 @@ import ast
 from src.summary import (
     generate_summary_from_python_file,
     summarize_directory,
-    format_summary,
+    format_summaries,
 )
 from src.utils import FunctionInfo, get_function_info
 
@@ -76,7 +76,7 @@ def test_summarize_directory():
         assert actual[key] == expected[key]
 
 
-def test_format_summary():
+def test_format_summaries():
     # Test that format_summary returns the correct string for a given summary
     summary = {
         'tests/test_files/test_file.py': [
@@ -99,20 +99,21 @@ def test_format_summary():
         ],
     }
 
-    expected = """File: tests/test_files/test_file.py
-```
-add(a, b)
-divide(a, b)
-```
-
-File: tests/test_files/test_file2.py
-```
-add(a, b)
-subtract(a, b)
-multiply(a, b)
-divide(a, b)
-modulus(a, b)
-```
-"""
-    actual = format_summary(summary)
+    expected = {
+        'tests/test_files/test_file.py': (
+            'File: tests/test_files/test_file.py\n'
+            '```\n'
+            'add(a, b) divide(a, b)\n'
+            '```\n'
+        ),
+        'tests/test_files/test_file2.py': (
+            'File: tests/test_files/test_file2.py\n'
+            '```\n'
+            'add(a, b) subtract(a, b) multiply(a, b) divide(a, b) modulus(a, b)\n'
+            '```\n'
+        ),
+    }
+    actual = format_summaries(summary)
+    print(actual)
+    print(expected)
     assert actual == expected

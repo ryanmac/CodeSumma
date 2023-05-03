@@ -109,6 +109,15 @@ def get_ignore_patterns(input_path, ignore_patterns=None):
 
     ignore_patterns += default_ignore_patterns
     ignore_patterns += git_ignore_patterns
+
+    # Remove duplicates
+    ignore_patterns = list(set(ignore_patterns))
+    # Remove empty strings
+    ignore_patterns = [pattern for pattern in ignore_patterns if pattern]
+    # Remove comments
+    ignore_patterns = [pattern for pattern in ignore_patterns if not pattern.startswith('#')]
+
+    print(f"Ignoring: {ignore_patterns}")
     return ignore_patterns
 
 
@@ -122,12 +131,37 @@ def check_ignore_patterns(path, ignore_patterns):
 
     Returns:
         bool: True if the path matches any of the ignore patterns, False otherwise.
+
+    Examples:
+        >>> check_ignore_patterns('.git', ['.git'])
+        True
     """
 
     for pattern in ignore_patterns:
         if pattern.lower() in path.lower():
             return True
+
+        # If the pattern contains a wildcard, check if it matches the path
+        if '*' in pattern:
+            pattern_parts = pattern.split('*')
+            if pattern_parts[0] and pattern_parts[1] and pattern_parts[0] in path and pattern_parts[-1] in path:
+                return True
     return False
+
+
+def remove_matching_patterns_from_list(list, ignore_patterns):
+    """
+    Remove files or directories from a list if they match any of the ignore patterns.
+
+    Args:
+        list (list): A list of files or directories.
+        ignore_patterns (list): A list of patterns to ignore.
+
+    Returns:
+        list: A list of files or directories.
+    """
+
+    return [item for item in list if not check_ignore_patterns(item, ignore_patterns)]
 
 
 def get_all_code(dir_path, ignore_patterns):
@@ -145,20 +179,22 @@ def get_all_code(dir_path, ignore_patterns):
     summary = {}
     for root, dirs, files in os.walk(dir_path):
 
-        for dir in dirs:
-            if check_ignore_patterns(dir, ignore_patterns):
-                dirs.remove(dir)
+        if check_ignore_patterns(root, ignore_patterns):
+            continue
+
+        dirs = remove_matching_patterns_from_list(dirs, ignore_patterns)
+        files = remove_matching_patterns_from_list(files, ignore_patterns)
 
         for file in files:
 
             file_path = os.path.join(root, file)
 
-            if check_ignore_patterns(file_path, ignore_patterns):
-                continue
-
             code = []
-            with open(file_path, 'r') as f:
-                code.append(f.read())
+            try:
+                with open(file_path, 'r') as f:
+                    code.append(f.read())
+            except UnicodeDecodeError:
+                continue
             summary[file_path] = code
 
     return summary
