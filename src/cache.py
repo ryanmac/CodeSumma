@@ -3,7 +3,12 @@ import pickle
 import os
 import hashlib
 
-cache_file = "cache.pkl"
+import sys
+
+# Determine the path to cache.py
+cache_dir = os.path.join(os.path.dirname(os.path.abspath(sys.modules[__name__].__file__)), '..', 'cache')
+os.makedirs(cache_dir, exist_ok=True)
+cache_file = os.path.join(cache_dir, "cache.pkl")
 
 
 def hash_key(prompt_object):
