@@ -54,6 +54,7 @@ ignore_arg=""
 manual_mode=false
 max_tokens_out_arg=""
 print_full_arg=""
+print_only_arg=""
 traceback_arg=""
 
 while [[ $# -gt 0 ]]
@@ -99,6 +100,17 @@ do
         shift
       done
       ;;
+    --print-only|-po)
+      shift
+      while [[ -n "$1" && "$1" != -* ]]; do
+        if [ -z "$print_only_arg" ]; then
+          print_only_arg="--print-only $1"
+        else
+          print_only_arg="$print_only_arg,$1"
+        fi
+        shift
+      done
+      ;;
     --traceback|-t)
       shift
       if [[ -n "$1" && "$1" != -* ]]; then
@@ -135,5 +147,5 @@ fi
 
 # Call the Python script with the proper arguments
 printf "\033[1;36mCodeSumma\033[0m\n"
-echo "$PYTHON_CMD $script_dir/../main.py $input_path $all_arg $copy_arg $ignore_arg $print_full_arg $traceback_arg $max_tokens_out_arg ${@/--manual/}"
-eval "$PYTHON_CMD $script_dir/../main.py \"$input_path\" $all_arg $copy_arg $ignore_arg $print_full_arg $traceback_arg $max_tokens_out_arg ${@/--manual/}"
+echo "$PYTHON_CMD $script_dir/../main.py $input_path $all_arg $copy_arg $ignore_arg $print_full_arg $print_only_arg $traceback_arg $max_tokens_out_arg ${@/--manual/}"
+eval "$PYTHON_CMD $script_dir/../main.py \"$input_path\" $all_arg $copy_arg $ignore_arg $print_full_arg $print_only_arg $traceback_arg $max_tokens_out_arg ${@/--manual/}"

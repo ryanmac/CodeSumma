@@ -47,6 +47,12 @@ def parse_arguments():
         help='Print full file content for files matching the pattern (e.g. "test_")'
     )
     parser.add_argument(
+        '-po', '--print-only',
+        metavar='pattern',
+        nargs='+',
+        help='Print full file content only for files matching the pattern (e.g. "test_")'
+    )
+    parser.add_argument(
         '-t', '--traceback',
         nargs='?',
         const=True,

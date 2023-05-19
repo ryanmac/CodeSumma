@@ -9,17 +9,16 @@ import tempfile
 from .file_processing import (
     check_ignore_patterns,
     remove_matching_patterns_from_list,
+    get_all_code,
+    get_code_for_matching_patterns,
+    format_file_hierarchy,
+    get_ignore_patterns,
 )
 from .openai_api import (
     call_openai_api,
     OPENAI_API_KEY,
     estimate_tokens,
     trim_string_to_token_limit,
-)
-from .file_processing import (
-    format_file_hierarchy,
-    get_ignore_patterns,
-    get_all_code,
 )
 from .traceback_parser import (
     parse_traceback,
@@ -59,16 +58,34 @@ def run_summary(args):
     if isinstance(print_full_patterns, list) and len(print_full_patterns) == 1:
         print_full_patterns = print_full_patterns[0].split(',')
 
+    print_only_patterns = args.print_only or []
+    if isinstance(print_only_patterns, list) and len(print_only_patterns) == 1:
+        print_only_patterns = print_only_patterns[0].split(',')
+
     if args.all:
         print(f"Summarizing all code in: {input_path}")
         summary = get_all_code(input_path, ignore_patterns)
+    elif args.print_only:
+        print(f"Printing full file content for files matching: {print_only_patterns}")
+        summary = get_code_for_matching_patterns(input_path, print_only_patterns, ignore_patterns)
     elif os.path.isfile(input_path) and input_path.endswith('.py'):
         print(f"Summarizing file: {input_path}")
         if any(fnmatch.fnmatch(input_path, pattern) for pattern in print_full_patterns):
             with open(input_path, 'r') as f:
                 summary = {input_path: f.read()}
+        elif any(fnmatch.fnmatch(input_path, pattern) for pattern in print_only_patterns):
+            with open(input_path, 'r') as f:
+                summary = {input_path: f.read()}
         else:
-            summary = {input_path: generate_summary_from_python_file(input_path)}
+            functions = generate_summary_from_python_file(input_path)
+            if functions:
+                summary = {input_path: functions}
+            else:
+                with open(input_path, 'r') as f:
+                    code = f.read()
+                code = trim_string_to_token_limit(code, 2000)
+                prompt = f"Summarize the following:\n````\n{code}\n````"
+                summary = {input_path: call_openai_api(prompt, 200)}
     elif os.path.isdir(input_path):
         print(f"Summarizing directory: {input_path}")
         summary = summarize_directory(input_path, ignore_patterns, print_full_patterns)
@@ -176,7 +193,10 @@ def generate_summary_from_python_file(file_path):
     with open(file_path, 'r') as f:
         file_contents = f.read()
 
-    module = ast.parse(file_contents)
+    try:
+        module = ast.parse(file_contents)
+    except SyntaxError:
+        return False
     summary_items = []
 
     for item in module.body:
@@ -248,7 +268,14 @@ def summarize_directory(dir_path, ignore_patterns=None, print_full_patterns=None
             else:
                 if file_path.endswith('.py'):
                     functions = generate_summary_from_python_file(file_path)
-                    summary[file_path] = functions
+                    if functions:
+                        summary[file_path] = functions
+                    else:
+                        with open(file_path, 'r') as f:
+                            code = f.read()
+                        code = trim_string_to_token_limit(code, 2000)
+                        prompt = f"Summarize the following:\n````\n{code}\n````"
+                        summary[file_path] = call_openai_api(prompt, 200)
                 elif os.stat(file_path).st_size < 100:
                     summary[file_path] = []
                 elif file_path.endswith('.md'):

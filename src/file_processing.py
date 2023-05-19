@@ -198,3 +198,44 @@ def get_all_code(dir_path, ignore_patterns):
             summary[file_path] = code
 
     return summary
+
+
+def get_code_for_matching_patterns(dir_path, patterns, ignore_patterns):
+    """
+    Get all code in a directory, recursively.
+
+    Args:
+        dir_path (str): The path to the directory.
+        patterns (list): A list of patterns to match.
+        ignore_patterns (list): A list of patterns to ignore.
+
+    Returns:
+        dict: A dictionary of file paths and code.
+    """
+
+    summary = {}
+    for root, dirs, files in os.walk(dir_path):
+
+        if check_ignore_patterns(root, ignore_patterns):
+            continue
+
+        dirs = remove_matching_patterns_from_list(dirs, ignore_patterns)
+        files = remove_matching_patterns_from_list(files, ignore_patterns)
+
+        for file in files:
+
+            file_path = os.path.join(root, file)
+
+            # Check if the file matches any of the patterns
+            if not check_ignore_patterns(file_path, patterns):
+                continue
+
+            code = []
+            try:
+                with open(file_path, 'r') as f:
+                    code.append(f.read())
+            except UnicodeDecodeError:
+                continue
+            summary[file_path] = code
+
+    return summary
