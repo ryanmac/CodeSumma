@@ -1,6 +1,6 @@
 import pyperclip
-from src.summary import run_summary
-from src.utils import parse_arguments
+from summary import run_summary
+from utils import parse_arguments
 
 
 def main():
